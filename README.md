@@ -87,8 +87,6 @@ gpt4 What is this website about?\n\n{{ https://ggml.ai/ }}
 gpt4r And what is the ggml way according to the website?
 ```
 
-Or (piping untrusted commands into your shell is always a great idea!):
-
 Also cool:
 
 ```bash
