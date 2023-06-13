@@ -1,8 +1,30 @@
 # GPTX
 
+Bringing the Unix-philosophy to ChatGPT.
+
 GPTX is a Python module that allows you to access OpenAI's Chat-models from the
-terminal. It provides a command-line interface to manage conversations, and
-generate responses.
+terminal. Apart from asking general questions you can e.g. generate bash
+commands, inject file contents, websites and stdin into your prompts.
+
+```bash
+$ gptbash Grep for all python imports, not including .venv/ or .env/
+...
+$ gptx repeat| sh | gpt4 create a minimal requirements.txt for the following imports:\n{{ stdin }}
+...
+$ gpt4r add mypy, flake8, isort and black
+Conversation ID: oni
+
+requirements.txt:
+
+click
+openai
+requests
+PyPDF2
+mypy
+flake8
+isort
+black
+```
 
 ## Installation
 
@@ -10,7 +32,7 @@ generate responses.
 2. Install the required dependencies `pip install -r requirements.txt`
 3. Paste your OpenAI API key into `~/.gptx/api-key.txt`
 
-I recommend adding the following aliases to your `.bashrc` or `.bash_aliases`:
+I strongly recommend adding the following aliases to your `.bashrc` or `.bash_aliases`:
 
 ```bash
 alias gpt4="gptx q --model gpt-4"  # To ask a question in a new conversation
@@ -38,36 +60,6 @@ gptx q -m 1000 -c latest Write a README.md for the following Python module:\n\n{
 gptx repeat > README.md
 ```
 
-1. Query GPT-4:
-
-```bash
-gptx q What does this code do?\n\n{{ gptx.py }}
-```
-
-2. List conversations:
-
-```bash
-gptx ls
-```
-
-3. Remove a conversation:
-
-```bash
-gptx rm [conversation_id]
-```
-
-4. Print a conversation:
-
-```bash
-gptx print [conversation_id]
-```
-
-5. Repeat the latest message in a conversation:
-
-```bash
-gptx repeat [conversation_id]
-```
-
 If the above-mentioned aliases are set, you can use GPTX as follows:
 
 ```bash
@@ -77,34 +69,6 @@ gpt4r And what is the ggml way according to the website?
 ```
 
 Or (piping untrusted commands into your shell is always a great idea!):
-
-```bash
-$ gptbash Grep for all python imports, not including .venv/ | sh | gpt4 create a requirements.txt for the following imports: {{ stdin }}\nExclude standard library imports
-Conversation ID: 2uc
-
-Injecting: stdin	359 chars
-Conversation ID: oni
-
-requirements.txt:
-
-click
-openai
-requests
-PyPDF2
-$ gpt4r add mypy, flake8, isort and black
-Conversation ID: oni
-
-requirements.txt:
-
-click
-openai
-requests
-PyPDF2
-mypy
-flake8
-isort
-black
-```
 
 Also cool:
 
