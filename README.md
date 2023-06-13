@@ -7,14 +7,26 @@ terminal. Apart from asking general questions you can e.g. generate bash
 commands, inject file contents, websites and stdin into your prompts.
 
 ```bash
-$ gptbash Grep for all python imports, not including .venv/ or .env/
-...
-$ gptx repeat| sh | gpt4 create a minimal requirements.txt for the following imports:\n{{ stdin }}
-...
-$ gpt4r add mypy, flake8, isort and black
-Conversation ID: oni
+$ gptbash Grep for all python imports, excluding .venv/
+Conversation ID: bn5
 
-requirements.txt:
+grep -r --exclude-dir=.venv "import" --include="*.py"
+$ gptx repeat | sh | gpt4 create a minimal requirements.txt for the following imports:\n{{ stdin }}
+Injecting: stdin	359 chars
+Conversation ID: a4o
+
+Here is the minimal requirements.txt for the specified imports:
+
+click
+openai
+requests
+PyPDF2
+
+The other imports are part of the Python standard library and do not need to be included in the requirements.txt file.
+$ gpt4r add mypy, flake8, isort and black
+Conversation ID: a4o
+
+Here is the updated requirements.txt with the additional packages:
 
 click
 openai
