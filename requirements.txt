@@ -1,0 +1,10 @@
+openai
+click
+PyPDF2
+requests
+
+mypy
+flake8
+flake8-bugbear
+isort
+black
