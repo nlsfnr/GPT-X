@@ -31,6 +31,7 @@ black
 1. Clone the repository.
 2. Install the required dependencies `pip install -r requirements.txt`
 3. Paste your OpenAI API key into `~/.gptx/api-key.txt`
+4. Add `gptx.py` to yout PATH, e.g. `ln -s "$(pwd)/gptx.py" ~/.local/bin/gptx` (assuming you are inside the repository)
 
 I strongly recommend adding the following aliases to your `.bashrc` or `.bash_aliases`:
 
