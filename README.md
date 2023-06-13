@@ -15,6 +15,7 @@ I recommend adding the following aliases to your `.bashrc` or `.bash_aliases`:
 ```bash
 alias gpt4="gptx q --model gpt-4"  # To ask a question in a new conversation
 alias gpt4r="gptx q --model gpt-4 --conversation latest"  # Continue the latest conversation
+alias gptbash="gptx q --model gpt-4 --prompt bash"  # Output raw bash commands
 ```
 
 ## Usage
@@ -71,7 +72,44 @@ If the above-mentioned aliases are set, you can use GPTX as follows:
 
 ```bash
 gpt4 What is this website about?\n\n{{ https://ggml.ai/ }}
+...
 gpt4r And what is the ggml way according to the website?
+```
+
+Or (piping untrusted commands into your shell is always a great idea!):
+
+```bash
+$ gptbash Grep for all python imports, not including .venv/ | sh | gpt4 create a requirements.txt for the following imports: {{ stdin }}\nExclude standard library imports
+Conversation ID: 2uc
+
+Injecting: stdin	359 chars
+Conversation ID: oni
+
+requirements.txt:
+
+click
+openai
+requests
+PyPDF2
+$ gpt4r add mypy, flake8, isort and black
+Conversation ID: oni
+
+requirements.txt:
+
+click
+openai
+requests
+PyPDF2
+mypy
+flake8
+isort
+black
+```
+
+Also cool:
+
+```bash
+gptbash Fastest way to brick my Linux machine | sh
 ```
 
 ## License
