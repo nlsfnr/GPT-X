@@ -6,11 +6,15 @@ GPTX is a Python module that allows you to access OpenAI's Chat-models from the
 terminal. Apart from asking general questions you can e.g. generate bash
 commands, inject file contents, websites and stdin into your prompts.
 
+A typical workflow could look as follows:
+
 ```bash
 $ gptbash Grep for all python imports, excluding .venv/
 Conversation ID: bn5
 
 grep -r --exclude-dir=.venv "import" --include="*.py"
+```
+```bash
 $ gptx repeat | sh | gpt4 create a minimal requirements.txt for the following imports:\n{{ stdin }}
 Injecting: stdin	359 chars
 Conversation ID: a4o
@@ -23,6 +27,8 @@ requests
 PyPDF2
 
 The other imports are part of the Python standard library and do not need to be included in the requirements.txt file.
+```
+```bash
 $ gpt4r add mypy, flake8, isort and black
 Conversation ID: a4o
 
