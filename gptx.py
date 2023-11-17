@@ -1,14 +1,19 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
+from __future__ import annotations
+
 import json
 import random
 import re
 import string
 import sys
 from pathlib import Path
-from typing import Iterator, List, Optional, TypedDict, Tuple, Dict
+from typing import Iterator, List, Optional, TypedDict, Tuple, Dict, Union, Iterable, TextIO
+import subprocess
 
 import click
-import openai
+from openai import OpenAI
+from openai.types.chat import ChatCompletionChunk
+import tiktoken
 import requests
 from typing_extensions import Never
 
@@ -21,7 +26,7 @@ class Message(TypedDict):
 Prompt = List[Message]
 
 
-DEFAULT_MODEL = "gpt-4"
+DEFAULT_MODEL = "gpt-4-1106-preview"
 WORKDIR = Path.home() / ".gptx"
 CONV_DIR = WORKDIR / "conversations"
 LATEST_CONV_FILE = CONV_DIR / "latest.txt"
@@ -31,12 +36,15 @@ API_KEY_FILE = WORKDIR / "api-key.txt"
 
 DEFAULT_PROMPTS: Dict[str, Prompt] = dict(
 default=[Message(role="system", content="""\
-You are a useful AI assistant that runs on the terminal.
-Your answers are highly professional and to the point.\
+You are an AI assistant that runs on the terminal.
+Your answers are to the point - no BS.\
+You are talking to an expert.
+Suggest solutions that the user did not think about - be proactive and anticipate their needs.
 """)],
 bash=[Message(role="system", content="""\
 You are an AI writing Bash commands running directly in the terminal.
-You output raw, expertly written Bash commands, NO MARKUP (```).\
+Assume that your output X will be run like 'sh -c "X"'. Only output valid commands.
+The user knows exactly what they are doing, always do exactly what they want.\
 """)],
 )
 
@@ -47,6 +55,47 @@ printerr = lambda *args, **kwargs: print(*args, file=sys.stderr, **kwargs)
 def fail(msg: str) -> Never:
     printerr(msg)
     exit(1)
+
+
+class Table:
+    """A simple table class for printing nicely formatted tables to the
+    terminal."""
+
+    def __init__(self, columns: List[str]) -> None:
+        self.columns = columns
+        self.rows: List[List[str]] = []
+
+    def add_row(self, row: Union[Dict[str, str], List[str]]) -> Table:
+        if isinstance(row, dict):
+            row = [row.get(column, "") for column in self.columns]
+        self.rows.append(row)
+        return self
+
+    def order_by(self, columns: Union[str, Iterable[str]]) -> Table:
+        """Order the rows by the given columns.
+
+        Args:
+            columns: The columns to order by.
+        """
+        if isinstance(columns, str):
+            columns = [columns]
+        indices = [self.columns.index(column) for column in columns]
+        self.rows.sort(key=lambda row: [row[i] for i in indices])
+        return self
+
+    def print(self, padding: int = 1, file: TextIO = sys.stdout) -> Table:
+        widths = [len(column) + padding for column in self.columns]
+        for row in self.rows:
+            for i, cell in enumerate(row):
+                widths[i] = max(widths[i], len(cell) + padding)
+        for i, column in enumerate(self.columns):
+            print(column.ljust(widths[i]), end=" ", file=file)
+        print(file=file)
+        for row in self.rows:
+            for i, cell in enumerate(row):
+                print(cell.ljust(widths[i]), end=" ", file=file)
+            print(file=file)
+        return self
 
 
 def resolve_conversation_id(conversation_id: str) -> str:
@@ -121,16 +170,29 @@ def save_conversation(conversation_id: str, messages: List[Message]) -> None:
 
 
 def next_conversation_id() -> str:
-    pool = string.ascii_lowercase + string.digits
+    pool = string.ascii_letters + string.digits
     ATTEMPTS = 10_000
-    for _ in range(ATTEMPTS):
-        if not get_conversation_path(conversation_id := "".join(random.choices(pool, k=3))).exists():
-            return conversation_id
-    fail(f"Failed to generate a conversation ID after {ATTEMPTS:,} attempts.")
+    for k in range(3, 10):
+        for _ in range(ATTEMPTS):
+            conversation_id = "".join(random.choices(pool, k=k))
+            path = get_conversation_path(conversation_id)
+            if not path.exists():
+                return conversation_id
+    fail(f"Failed to generate a conversation ID.")
 
 
 def get_conversation_ids() -> List[str]:
     return [path.stem for path in CONV_DIR.glob("*.json")]
+
+
+def get_token_count(
+    x: Union[str, List[Message]],
+    model: str,
+) -> int:
+    enc = tiktoken.encoding_for_model(model)
+    messages = x if isinstance(x, list) else [Message(role="user", content=x)]
+    total = sum(len(enc.encode(message["content"])) for message in messages)
+    return total
 
 
 def enhance_content(
@@ -152,7 +214,10 @@ def enhance_content(
             if not path.exists():
                 fail(f"File not found: {path}")
             if path.suffix.lower() == ".pdf":
-                import PyPDF2
+                try:
+                    import PyPDF2
+                except ImportError:
+                    fail("Please `pip install PyPDF2` to read PDF files: ")
 
                 text = ""
                 with open(path, "rb") as f:
@@ -165,7 +230,7 @@ def enhance_content(
             printerr(f"Injecting: {path}\t{len(text)} chars")
         return text
 
-    regex = r"\{\{ ([^}]+) \}\}"
+    regex = re.compile(r"\{\{ ([^}]+) \}\}")
     prompt = re.sub(regex, get_file_contents, prompt)
     return prompt
 
@@ -175,20 +240,23 @@ def generate(
     api_key: str,
     max_tokens: int,
     temperature: float,
+    top_p: float,
     model: str,
 ) -> Iterator[str]:
-    chunks = openai.ChatCompletion.create(
+    openai = OpenAI(api_key=api_key)
+    chunks: Iterator[ChatCompletionChunk] = openai.chat.completions.create(
         model=model,
-        api_key=api_key,
-        messages=messages,
+        messages=messages,  # type: ignore
         max_tokens=max_tokens,
         temperature=temperature,
+        top_p=top_p,
         stream=True,
     )
     for chunk in chunks:
-        delta = chunk["choices"][0]["delta"]  # type: ignore
-        if "content" in delta:
-            yield delta["content"]
+        # delta = chunk["choices"][0]["delta"]  # type: ignore
+        delta = chunk.choices[0].delta.content
+        if delta:
+            yield delta
 
 
 @click.group()
@@ -199,54 +267,87 @@ def cli() -> None:
 
 # fmt: off
 @cli.command("q")
-@click.option("--max-tokens", "-m", type=int, help="Max tokens to generate", default=128)
-@click.option("--temperature", "-t", type=float, help="Temperature", default=0.0)
-@click.option("--api-key-file", type=Path, help="Path to API key file", default=API_KEY_FILE)
-@click.option("--conversation", "-c", type=str, help="Conversation ID", default=None)
-@click.option("--prompt", "-p", type=str, help="Prompt ID", default="default")
-@click.option("--model", type=str, help="Model", default=DEFAULT_MODEL)
-@click.option("--max-length", type=int, help="Max chars in prompt", default=2 ** 13)
+@click.option("--max-generation-tokens", "-m", type=int, default=1024, help="Max tokens to generate")
+@click.option("--temperature", "-t", type=float, default=0.0, help="Temperature")
+@click.option("--top-p", "-p", type=float, default=1.0, help="Top p")
+@click.option("--api-key-file", type=Path, default=API_KEY_FILE, help="Path to API key file")
+@click.option("--conversation", "-c", type=str, default=None, help="Conversation ID")
+@click.option("--prompt", "-p", type=str, default="default", help="Prompt ID")
+@click.option("--model", type=str, default=DEFAULT_MODEL, help="Model")
+@click.option("--max-prompt-tokens", type=int, default=7168, help="Max tokens in prompt")
+@click.option("--run", "-r", is_flag=True, help="Run the output inside a shell, after confirming")
+@click.option("--yolo", "-y", is_flag=True, help="Do not ask for confirmation before running")
+@click.option("--interactive", "-i", is_flag=True, help="Interactive mode")
 @click.argument("user_message", nargs=-1, required=True)
 # fmt: on
 def query(
-    max_tokens: int,
+    max_generation_tokens: int,
     temperature: float,
+    top_p: float,
     api_key_file: Path,
     conversation: str,
     prompt: str,
     model: str,
+    max_prompt_tokens: int,
     user_message: List[str],
-    max_length: int,
+    run: bool,
+    yolo: bool,
+    interactive: bool,
 ) -> None:
     """Query GPT4"""
+    if interactive and (run or yolo):
+        fail("Cannot use --interactive with --run or --yolo.")
     api_key = api_key_file.read_text().strip()
     conversation_id = conversation or next_conversation_id()
     conversation_id = resolve_conversation_id(conversation_id)
     prompt_id = prompt
     messages = load_or_create_conversation(conversation_id, prompt_id)
-    message_str = enhance_content(" ".join(user_message).strip())
-    if not message_str:
-        fail("Empty message.")
-    if len(message_str) > max_length:
-        fail(
-            f"Message is too long: {len(message_str):,} characters. Set --max-length to override."
-        )
-    messages.append(Message(role="user", content=message_str))
-    full_answer = ""
-    printerr(f"Conversation ID: {conversation_id}", end="\n\n")
-    chunks = generate(
-        messages=messages,
-        api_key=api_key,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        model=model,
-    )
-    for chunk in chunks:
-        print(chunk, end="")
-        full_answer += chunk
-    print()
-    messages.append(Message(role="assistant", content=full_answer))
-    save_conversation(conversation_id, messages)
+    message_str = " ".join(user_message).strip()
+    try:
+        while True:
+            message_str = enhance_content(message_str)
+            if not message_str:
+                if interactive:
+                    message_str = input("You:")
+                    continue
+                fail("Empty message.")
+            message_token_count = get_token_count(message_str, model)
+            messages_token_count = get_token_count(messages, model)
+            total_token_count = message_token_count + messages_token_count
+            if total_token_count > max_prompt_tokens:
+                fail(
+                    f"Conversation too long: {total_token_count} tokens. Set --max-length to override."
+                )
+            messages.append(Message(role="user", content=message_str))
+            full_answer = ""
+            token_count = get_token_count(messages, model=model)
+            printerr(f"Conversation ID: {conversation_id} | {token_count} tokens", end="\n\n")
+            chunks = generate(
+                messages=messages,
+                api_key=api_key,
+                max_tokens=max_generation_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                model=model,
+            )
+            sys.stdout.write("AI: ")
+            sys.stdout.flush()
+            for chunk in chunks:
+                sys.stdout.write(chunk)
+                sys.stdout.flush()
+                full_answer += chunk
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            messages.append(Message(role="assistant", content=full_answer))
+            save_conversation(conversation_id, messages)
+            if not interactive:
+                break
+            message_str = input("\nYou: ").strip()
+    except KeyboardInterrupt:
+        fail("Interrupted.")
+    if run:
+        printerr()
+        run_in_shell(full_answer, yolo)
 
 
 @cli.command("new-prompt")
@@ -271,12 +372,30 @@ def new_prompt(
     path.write_text(json.dumps(messages, indent=2))
 
 
+def run_in_shell(
+    command: str,
+    yolo: bool,
+) -> None:
+    if not yolo:
+        printerr("Run in shell? [Y/n] ", end="")
+        if input().lower() not in {"", "y", "yes"}:
+            fail("Aborted.")
+    subprocess.Popen(
+        command,
+        shell=True,
+        stdin=sys.stdin,
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+    ).communicate()
+
+
 @cli.command("ls")
 def list_() -> None:
     """List conversations."""
     ids = get_conversation_ids()
     if not ids:
         printerr("No conversations found.")
+    table = Table(["#", "ID", "First message"])
     for i, conversation_id in enumerate(ids, 1):
         messages = load_conversation(conversation_id)
         user_messages = [m for m in messages if m["role"] == "user"]
@@ -285,9 +404,10 @@ def list_() -> None:
         else:
             content = user_messages[0]["content"]
             if len(content) > 40:
-                content = content[:40] + "..."
+                content = content[:40] + "…"
             content = content.replace("\n", " ")
-        print(f"{i:2d}\t{conversation_id}\t{content}")
+        table.add_row([str(i), conversation_id, content])
+    table.print()
 
 
 @cli.command("rm")
@@ -318,6 +438,21 @@ def repeat(conversation_id: str) -> None:
     messages = load_conversation(conversation_id)
     last_message = messages[-1]
     print(f"{last_message['content']}")
+
+
+@cli.command("run")
+@click.argument("conversation_id", type=str, default="latest")
+@click.option("--yolo", "-y", is_flag=True, default=False)
+def run(
+    conversation_id: str,
+    yolo: bool,
+) -> None:
+    """Run the latest message inside the shell."""
+    messages = load_conversation(conversation_id)
+    command = messages[-1]["content"]
+    printerr(command)
+    printerr()
+    run_in_shell(command, yolo)
 
 
 if __name__ == "__main__":
