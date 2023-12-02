@@ -1,17 +1,29 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import importlib
 import json
 import random
 import re
 import string
+import subprocess
 import sys
 from pathlib import Path
-from typing import Iterator, List, Optional, TypedDict, Tuple, Dict, Union, Iterable, TextIO, TYPE_CHECKING
 from types import ModuleType
-import subprocess
+from typing import (
+    TYPE_CHECKING,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    TextIO,
+    Tuple,
+    TypedDict,
+    Union,
+)
+
 from typing_extensions import Never
-import importlib
 
 
 def fail(msg: str) -> Never:
@@ -40,14 +52,16 @@ def confirm(msg: str, default: bool = False) -> bool:
 
 if TYPE_CHECKING:
     import click
+    import requests
+    import tiktoken
     from openai import OpenAI
     from openai.types.chat import ChatCompletionChunk
-    import tiktoken
-    import requests
 else:
     click = try_import("click", "click>=8.0.0")
     OpenAI = try_import("openai", "openai>=1.0.0").OpenAI
-    ChatCompletionChunk = try_import("openai.types.chat", "openai>=1.0.0").ChatCompletionChunk
+    ChatCompletionChunk = try_import(
+        "openai.types.chat", "openai>=1.0.0"
+    ).ChatCompletionChunk
     tiktoken = try_import("tiktoken", "tiktoken>=0.5.0")
     requests = try_import("requests", "requests>=2.0.0")
 
@@ -69,17 +83,27 @@ API_KEY_FILE = WORKDIR / "api-key.txt"
 
 
 DEFAULT_PROMPTS: Dict[str, Prompt] = dict(
-default=[Message(role="system", content="""\
+    default=[
+        Message(
+            role="system",
+            content="""\
 You are an AI assistant that runs on the terminal.
 Your answers are to the point - no BS.\
 You are talking to an expert.
 Suggest solutions that the user did not think about - be proactive and anticipate their needs.
-""")],
-bash=[Message(role="system", content="""\
+""",
+        )
+    ],
+    bash=[
+        Message(
+            role="system",
+            content="""\
 You are an AI writing Bash commands running directly in the terminal.
 Assume that your output X will be run like 'sh -c "X"'. Only output valid commands.
 The user knows exactly what they are doing, always do exactly what they want.\
-""")],
+""",
+        )
+    ],
 )
 
 
@@ -204,7 +228,7 @@ def next_conversation_id() -> str:
             path = get_conversation_path(conversation_id)
             if not path.exists():
                 return conversation_id
-    fail(f"Failed to generate a conversation ID.")
+    fail(f"Failed to generate a conversation ID after {ATTEMPTS} attempts.")
 
 
 def get_conversation_ids() -> List[str]:
@@ -240,10 +264,10 @@ def enhance_content(
             if not path.exists():
                 fail(f"File not found: {path}")
             if path.suffix.lower() == ".pdf":
-                try:
+                if TYPE_CHECKING:
                     import PyPDF2
-                except ImportError:
-                    fail("Please `pip install PyPDF2` to read PDF files: ")
+                else:
+                    PyPDF2 = try_import("PyPDF2", "PyPDF2>=3.0.0")
 
                 text = ""
                 with open(path, "rb") as f:
@@ -347,7 +371,9 @@ def query(
             messages.append(Message(role="user", content=message_str))
             full_answer = ""
             token_count = get_token_count(messages, model=model)
-            printerr(f"Conversation ID: {conversation_id} | {token_count} tokens", end="\n\n")
+            printerr(
+                f"Conversation ID: {conversation_id} | {token_count} tokens", end="\n\n"
+            )
             chunks = generate(
                 messages=messages,
                 api_key=api_key,
@@ -378,9 +404,16 @@ def query(
 
 @cli.command("new-prompt")
 @click.option("--prompt", "-p", type=str, help="Prompt ID", required=True)
-@click.option("--message", "-m", type=str, multiple=True,
-              help=("Message to add to prompt. First word is the role (user or assistant), "
-                    "followed by content"))
+@click.option(
+    "--message",
+    "-m",
+    type=str,
+    multiple=True,
+    help=(
+        "Message to add to prompt. First word is the role (user or assistant), "
+        "followed by content"
+    ),
+)
 def new_prompt(
     prompt: str,
     message: Tuple[str, ...],
@@ -391,8 +424,9 @@ def new_prompt(
             fail(f"Invalid role: {role}, expected 'user', 'assistant' or 'system'")
         if not content.strip():
             fail(f"Empty content for role: {role}")
-    messages: Prompt = [Message(role=role, content=content)
-                        for role, content in role_content_pairs]
+    messages: Prompt = [
+        Message(role=role, content=content) for role, content in role_content_pairs
+    ]
     path = get_prompt_path(prompt)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(messages, indent=2))
