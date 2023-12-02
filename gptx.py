@@ -7,15 +7,49 @@ import re
 import string
 import sys
 from pathlib import Path
-from typing import Iterator, List, Optional, TypedDict, Tuple, Dict, Union, Iterable, TextIO
+from typing import Iterator, List, Optional, TypedDict, Tuple, Dict, Union, Iterable, TextIO, TYPE_CHECKING
+from types import ModuleType
 import subprocess
-
-import click
-from openai import OpenAI
-from openai.types.chat import ChatCompletionChunk
-import tiktoken
-import requests
 from typing_extensions import Never
+import importlib
+
+
+def fail(msg: str) -> Never:
+    printerr(msg)
+    exit(1)
+
+
+def try_import(name: str, pip_name: str) -> ModuleType:
+    try:
+        return importlib.import_module(name)
+    except ImportError:
+        printerr(f"Required package not found: {pip_name}")
+        if not confirm(f"Run `pip install {pip_name}`?"):
+            fail("Aborted.")
+        subprocess.run(["pip", "install", pip_name], check=True)
+        return try_import(name, pip_name)
+
+
+printerr = lambda *args, **kwargs: print(*args, file=sys.stderr, **kwargs)
+
+
+def confirm(msg: str, default: bool = False) -> bool:
+    printerr(f"{msg} [{'Y/n' if default else 'y/N'}] ", end="")
+    return input().lower() in ("y", "yes")
+
+
+if TYPE_CHECKING:
+    import click
+    from openai import OpenAI
+    from openai.types.chat import ChatCompletionChunk
+    import tiktoken
+    import requests
+else:
+    click = try_import("click", "click>=8.0.0")
+    OpenAI = try_import("openai", "openai>=1.0.0").OpenAI
+    ChatCompletionChunk = try_import("openai.types.chat", "openai>=1.0.0").ChatCompletionChunk
+    tiktoken = try_import("tiktoken", "tiktoken>=0.5.0")
+    requests = try_import("requests", "requests>=2.0.0")
 
 
 class Message(TypedDict):
@@ -47,14 +81,6 @@ Assume that your output X will be run like 'sh -c "X"'. Only output valid comman
 The user knows exactly what they are doing, always do exactly what they want.\
 """)],
 )
-
-
-printerr = lambda *args, **kwargs: print(*args, file=sys.stderr, **kwargs)
-
-
-def fail(msg: str) -> Never:
-    printerr(msg)
-    exit(1)
 
 
 class Table:
@@ -376,10 +402,8 @@ def run_in_shell(
     command: str,
     yolo: bool,
 ) -> None:
-    if not yolo:
-        printerr("Run in shell? [Y/n] ", end="")
-        if input().lower() not in {"", "y", "yes"}:
-            fail("Aborted.")
+    if not yolo and not confirm("Run in shell?", default=True):
+        fail("Aborted.")
     subprocess.Popen(
         command,
         shell=True,
