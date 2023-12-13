@@ -47,7 +47,10 @@ printerr = lambda *args, **kwargs: print(*args, file=sys.stderr, **kwargs)
 
 def confirm(msg: str, default: bool = False) -> bool:
     printerr(f"{msg} [{'Y/n' if default else 'y/N'}] ", end="")
-    return input().lower() in ("y", "yes")
+    value = input().strip().lower()
+    if value == "":
+        return default
+    return value == "y"
 
 
 if TYPE_CHECKING:
