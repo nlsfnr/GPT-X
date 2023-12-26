@@ -90,13 +90,20 @@ class Message(TypedDict):
 
 Prompt = list[Message]
 
-
 DEFAULT_MODEL = "gpt-4-1106-preview"
-WORKDIR = Path.home() / ".gptx"
+WORKDIR = Path.home() / ".config" / "gptx"
 CONV_DIR = WORKDIR / "conversations"
 LATEST_CONV_FILE = CONV_DIR / "latest.txt"
 PROMPT_DIR = WORKDIR / "prompts"
 API_KEY_FILE = WORKDIR / "api-key.txt"
+
+
+# Migrate old workdir
+old_workdir = Path.home() / ".gptx"
+if old_workdir.exists() and confirm(f"Migrate {old_workdir} to {WORKDIR}?"):
+    WORKDIR.parent.mkdir(parents=True, exist_ok=True)
+    old_workdir.rename(WORKDIR)
+del old_workdir
 
 
 DEFAULT_PROMPTS: dict[str, Prompt] = dict(
