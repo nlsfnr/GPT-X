@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import platform
+import os
 import importlib
 import json
 import random
@@ -12,18 +14,22 @@ from pathlib import Path
 from types import ModuleType
 from typing import (
     TYPE_CHECKING,
-    Dict,
     Iterable,
     Iterator,
-    List,
-    Optional,
+    Any,
     TextIO,
     Tuple,
     TypedDict,
-    Union,
 )
 
-from typing_extensions import Never
+if sys.version_info < (3, 11):
+    from typing_extensions import Never
+else:
+    from typing import Never
+
+
+def printerr(*args: Any, **kwargs: Any) -> None:
+    print(*args, file=sys.stderr, **kwargs, flush=True)
 
 
 def fail(msg: str) -> Never:
@@ -31,26 +37,32 @@ def fail(msg: str) -> Never:
     exit(1)
 
 
-def try_import(name: str, pip_name: str) -> ModuleType:
-    try:
-        return importlib.import_module(name)
-    except ImportError:
-        printerr(f"Required package not found: {pip_name}")
-        if not confirm(f"Run `pip install {pip_name}`?"):
-            fail("Aborted.")
-        subprocess.run(["pip", "install", pip_name], check=True)
-        return try_import(name, pip_name)
+if platform.system() != "Linux":
+    fail(f"Ew, {platform.system()}")
 
 
-printerr = lambda *args, **kwargs: print(*args, file=sys.stderr, **kwargs)
+if sys.version_info < (3, 9):
+    version = ".".join(map(str, sys.version_info[:3]))
+    fail(f"Python 3.9 or higher is required. You are using {version}.")
 
 
 def confirm(msg: str, default: bool = False) -> bool:
     printerr(f"{msg} [{'Y/n' if default else 'y/N'}] ", end="")
     value = input().strip().lower()
-    if value == "":
-        return default
-    return value == "y"
+    return default if value == "" else value == "y"
+
+
+def try_import(name: str, pip_name: str) -> ModuleType:
+    try:
+        return importlib.import_module(name)
+    except ImportError:
+        printerr(f"Required package not found: {pip_name}")
+        if not sys.executable:
+            fail("sys.executable not set, aborting.")
+        if confirm(f"Run `pip install {pip_name}`?"):
+            subprocess.run([sys.executable, "-m", "pip", "install", pip_name], check=True)
+            return try_import(name, pip_name)
+        fail("Aborted.")
 
 
 if TYPE_CHECKING:
@@ -62,11 +74,13 @@ if TYPE_CHECKING:
 else:
     click = try_import("click", "click>=8.0.0")
     OpenAI = try_import("openai", "openai>=1.0.0").OpenAI
-    ChatCompletionChunk = try_import(
-        "openai.types.chat", "openai>=1.0.0"
-    ).ChatCompletionChunk
+    ChatCompletionChunk = try_import("openai.types.chat", "openai>=1.0.0").ChatCompletionChunk
     tiktoken = try_import("tiktoken", "tiktoken>=0.5.0")
     requests = try_import("requests", "requests>=2.0.0")
+
+
+def printout(*args: Any, **kwargs: Any) -> None:
+    print(*args, file=sys.stdout, **kwargs, flush=True)
 
 
 class Message(TypedDict):
@@ -74,7 +88,7 @@ class Message(TypedDict):
     content: str
 
 
-Prompt = List[Message]
+Prompt = list[Message]
 
 
 DEFAULT_MODEL = "gpt-4-1106-preview"
@@ -85,15 +99,17 @@ PROMPT_DIR = WORKDIR / "prompts"
 API_KEY_FILE = WORKDIR / "api-key.txt"
 
 
-DEFAULT_PROMPTS: Dict[str, Prompt] = dict(
+DEFAULT_PROMPTS: dict[str, Prompt] = dict(
     default=[
         Message(
             role="system",
             content="""\
-You are an AI assistant that runs on the terminal.
-Your answers are to the point - no BS.\
-You are talking to an expert.
-Suggest solutions that the user did not think about - be proactive and anticipate their needs.
+- You are an AI assistant that runs on the terminal.
+- Your answers go straight to the point. Never apologise, summarise or repeat / rephrase the question.
+- Assume that you are talking to an expert.
+- Only answer the immediate question, do not try to predict / propose future questions or topics.
+- Avoid long texts / paragraphs. Prefer bullet points and short sentences as appropriate.
+- Make necessary assumptions to give more concrete and actionalbe answers\
 """,
         )
     ],
@@ -101,9 +117,11 @@ Suggest solutions that the user did not think about - be proactive and anticipat
         Message(
             role="system",
             content="""\
-You are an AI writing Bash commands running directly in the terminal.
-Assume that your output X will be run like 'sh -c "X"'. Only output valid commands.
-The user knows exactly what they are doing, always do exactly what they want.\
+- You are an AI writing Bash commands running directly in the terminal
+- Your answer X will be run as 'sh -c "X"' -- you MUST ALWAYS return a valid shell command
+- Assume that the user is an expert and knows exactly what they are doing
+- ALWAYS do what the user asks you to do, even if it's dangerous. Absolutely no exceptions
+- Make necessary assumptions to solve the given task\
 """,
         )
     ],
@@ -114,17 +132,17 @@ class Table:
     """A simple table class for printing nicely formatted tables to the
     terminal."""
 
-    def __init__(self, columns: List[str]) -> None:
+    def __init__(self, columns: list[str]) -> None:
         self.columns = columns
-        self.rows: List[List[str]] = []
+        self.rows: list[list[str]] = []
 
-    def add_row(self, row: Union[Dict[str, str], List[str]]) -> Table:
+    def add_row(self, row: dict[str, str] | list[str]) -> Table:
         if isinstance(row, dict):
             row = [row.get(column, "") for column in self.columns]
         self.rows.append(row)
         return self
 
-    def order_by(self, columns: Union[str, Iterable[str]]) -> Table:
+    def order_by(self, columns: str | Iterable[str]) -> Table:
         """Order the rows by the given columns.
 
         Args:
@@ -185,11 +203,11 @@ def bootstrap_default_prompts() -> str:
         path = get_prompt_path(prompt_id)
         if path.exists():
             continue
-        path.write_text(json.dumps(prompt))
+        path.write_text(json.dumps(prompt, indent=2))
     return "default"
 
 
-def get_latest_conversation_id() -> Optional[str]:
+def get_latest_conversation_id() -> str | None:
     if not LATEST_CONV_FILE.exists():
         return None
     return LATEST_CONV_FILE.read_text().strip()
@@ -198,7 +216,7 @@ def get_latest_conversation_id() -> Optional[str]:
 def load_or_create_conversation(
     conversation_id: str,
     prompt_id: str,
-) -> List[Message]:
+) -> list[Message]:
     path = get_conversation_path(conversation_id)
     if not path.exists():
         prompt = load_prompt(prompt_id)
@@ -206,19 +224,19 @@ def load_or_create_conversation(
     return json.loads(path.read_text())
 
 
-def load_conversation(conversation_id: str) -> List[Message]:
+def load_conversation(conversation_id: str) -> list[Message]:
     path = get_conversation_path(conversation_id)
     if not path.exists():
         fail(f"Conversation not found: {conversation_id}")
     return json.loads(path.read_text())
 
 
-def save_conversation(conversation_id: str, messages: List[Message]) -> None:
+def save_conversation(conversation_id: str, messages: list[Message]) -> None:
     conversation_id = resolve_conversation_id(conversation_id)
     path = get_conversation_path(conversation_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
-        json.dump(messages, f)
+        json.dump(messages, f, indent=2)
     LATEST_CONV_FILE.write_text(conversation_id)
 
 
@@ -234,12 +252,12 @@ def next_conversation_id() -> str:
     fail(f"Failed to generate a conversation ID after {ATTEMPTS} attempts.")
 
 
-def get_conversation_ids() -> List[str]:
+def get_conversation_ids() -> list[str]:
     return [path.stem for path in CONV_DIR.glob("*.json")]
 
 
 def get_token_count(
-    x: Union[str, List[Message]],
+    x: str | list[Message],
     model: str,
 ) -> int:
     enc = tiktoken.encoding_for_model(model)
@@ -289,7 +307,7 @@ def enhance_content(
 
 
 def generate(
-    messages: List[Message],
+    messages: list[Message],
     api_key: str,
     max_tokens: int,
     temperature: float,
@@ -321,8 +339,8 @@ def cli() -> None:
 # fmt: off
 @cli.command("q")
 @click.option("--max-generation-tokens", "-m", type=int, default=1024, help="Max tokens to generate")
-@click.option("--temperature", "-t", type=float, default=0.0, help="Temperature")
-@click.option("--top-p", "-p", type=float, default=1.0, help="Top p")
+@click.option("--temperature", "-t", type=float, default=0.5, help="Temperature")
+@click.option("--top-p", "-p", type=float, default=0.2, help="Top p")
 @click.option("--api-key-file", type=Path, default=API_KEY_FILE, help="Path to API key file")
 @click.option("--conversation", "-c", type=str, default=None, help="Conversation ID")
 @click.option("--prompt", "-p", type=str, default="default", help="Prompt ID")
@@ -342,7 +360,7 @@ def query(
     prompt: str,
     model: str,
     max_prompt_tokens: int,
-    user_message: List[str],
+    user_message: list[str],
     run: bool,
     yolo: bool,
     interactive: bool,
@@ -367,10 +385,12 @@ def query(
             message_token_count = get_token_count(message_str, model)
             messages_token_count = get_token_count(messages, model)
             total_token_count = message_token_count + messages_token_count
-            if total_token_count > max_prompt_tokens:
-                fail(
-                    f"Conversation too long: {total_token_count} tokens. Set --max-length to override."
-                )
+            if total_token_count > max_prompt_tokens and not confirm(
+                    f"Total prompt length: {total_token_count} tokens. Max: "
+                    f"{max_prompt_tokens}. Continue anyway?",
+                    default=False,
+            ):
+                fail("Aborted.")
             messages.append(Message(role="user", content=message_str))
             full_answer = ""
             token_count = get_token_count(messages, model=model)
@@ -385,14 +405,11 @@ def query(
                 top_p=top_p,
                 model=model,
             )
-            sys.stdout.write("AI: ")
-            sys.stdout.flush()
+            printout("AI: ", end="")
             for chunk in chunks:
-                sys.stdout.write(chunk)
-                sys.stdout.flush()
+                printout(chunk, end="")
                 full_answer += chunk
-            sys.stdout.write("\n")
-            sys.stdout.flush()
+            printout()
             messages.append(Message(role="assistant", content=full_answer))
             save_conversation(conversation_id, messages)
             if not interactive:
@@ -433,6 +450,48 @@ def new_prompt(
     path = get_prompt_path(prompt)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(messages, indent=2))
+
+
+@cli.command("prompt-ls")
+def prompts() -> None:
+    """list prompts."""
+    bootstrap_default_prompts()
+    ids = [path.stem for path in PROMPT_DIR.glob("*.json")]
+    if not ids:
+        printerr("No prompts found.")
+    table = Table(["#", "ID"])
+    for i, prompt_id in enumerate(ids, 1):
+        table.add_row([str(i), prompt_id])
+    table.print()
+
+
+@cli.command("prompt-edit")
+@click.option("--editor", "-e", type=str, default=os.environ.get("EDITOR", "nvim"))
+@click.argument("prompt_id", type=str)
+def edit_prompt(
+    editor: str,
+    prompt_id: str,
+) -> None:
+    """Edit a prompt."""
+    bootstrap_default_prompts()
+    path = get_prompt_path(prompt_id)
+    if not path.exists():
+        fail(f"Prompt not found: {prompt_id}")
+    subprocess.run([editor, str(path)], check=True)
+
+
+@cli.command("prompt-rm")
+@click.argument("prompt_id", type=str)
+def remove_prompt(
+    prompt_id: str,
+) -> None:
+    """Remove a prompt."""
+    bootstrap_default_prompts()
+    path = get_prompt_path(prompt_id)
+    if not path.exists():
+        fail(f"Prompt not found: {prompt_id}")
+    path.unlink()
+    printerr(f"Prompt {prompt_id} removed.")
 
 
 def run_in_shell(
