@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import importlib
-import json
 import os
 import platform
 import random
@@ -63,6 +62,7 @@ if TYPE_CHECKING:
     import click
     import requests
     import tiktoken
+    import yaml
     from openai import OpenAI
     from openai.types.chat import ChatCompletionChunk
 else:
@@ -73,6 +73,7 @@ else:
     ).ChatCompletionChunk
     tiktoken = try_import("tiktoken", "tiktoken>=0.5.0")
     requests = try_import("requests", "requests>=2.0.0")
+    yaml = try_import("yaml", "pyyaml>=5.0.0")
 
 
 def printout(*args: Any, **kwargs: Any) -> None:
@@ -90,42 +91,33 @@ DEFAULT_MODEL = os.getenv("GPTX_DEFAULT_MODEL", "gpt-4")
 WORKDIR = Path(os.getenv("GPTX_WORKDIR", Path.home() / ".config" / "gptx"))
 CONV_DIR = Path(os.getenv("GPTX_CONV_DIR", WORKDIR / "conversations"))
 LATEST_CONV_FILE = Path(os.getenv("GPTX_LATEST_CONV_FILE", CONV_DIR / "latest.txt"))
-PROMPT_FILE = Path(os.getenv("GPXT_PROMPT_FILE", WORKDIR / "prompts.json"))
+PROMPT_FILE = Path(os.getenv("GPXT_PROMPT_FILE", WORKDIR / "prompts.yml"))
 API_KEY_FILE = Path(os.getenv("GPTX_API_KEY_FILE", WORKDIR / "api-key.txt"))
-
-
-# Migrate old workdir
-old_workdir = Path.home() / ".gptx"
-if old_workdir.exists() and confirm(f"Migrate {old_workdir} to {WORKDIR}?"):
-    WORKDIR.parent.mkdir(parents=True, exist_ok=True)
-    old_workdir.rename(WORKDIR)
-del old_workdir
 
 
 DEFAULT_PROMPTS: dict[str, Prompt] = dict(
     default=[
         Message(
             role="system",
-            content="""\
+            content="""
 - You are an AI assistant that runs on the terminal.
 - Your answers go straight to the point. Never apologise, summarise or repeat / rephrase the question.
 - Assume that you are talking to an expert.
 - Only answer the immediate question, do not try to predict / propose future questions or topics.
 - Avoid long texts / paragraphs. Prefer bullet points and short sentences as appropriate.
-- Make necessary assumptions to give more concrete and actionalbe answers\
-""",
+- Make necessary assumptions to give more concrete and actionalbe answers
+""".strip(),
         )
     ],
     bash=[
         Message(
             role="system",
-            content="""\
+            content="""
 - You are an AI writing Bash commands running directly in the terminal
 - Your answer X will be run as 'sh -c "X"' -- you MUST ALWAYS return a valid shell command
 - Assume that the user is an expert and knows exactly what they are doing
 - ALWAYS do what the user asks you to do, even if it's dangerous. Absolutely no exceptions
-- Make necessary assumptions to solve the given task\
-""",
+- Make necessary assumptions to solve the given task""".strip(),
         )
     ],
 )
@@ -183,28 +175,21 @@ def resolve_conversation_id(conversation_id: str) -> str:
 
 def get_conversation_path(conversation_id: str) -> Path:
     conversation_id = resolve_conversation_id(conversation_id)
-    path = CONV_DIR / f"{conversation_id}.json"
+    path = CONV_DIR / f"{conversation_id}.yml"
     return path
 
 
-def load_prompts() -> dict[str, Prompt]:
-    bootstrap_default_prompts()
+def load_prompts(bootstrap: bool = True) -> dict[str, Prompt]:
+    if bootstrap:
+        bootstrap_default_prompts()
     if not PROMPT_FILE.exists():
         fail(f"Prompt file not found: {PROMPT_FILE}")
-    prompts = json.loads(PROMPT_FILE.read_text())
-    if not all(isinstance(prompt, list) for prompt in prompts.values()):
-        fail(f"Invalid prompt file: {PROMPT_FILE}")
-    if not all(
-        isinstance(message, dict) and "role" in message and "content" in message
-        for prompt in prompts.values()
-        for message in prompt
-    ):
-        fail(f"Invalid prompt file: {PROMPT_FILE}")
+    prompts = yaml.safe_load(PROMPT_FILE.read_text())
     return prompts
 
 
 def write_prompts(prompts: dict[str, Prompt]) -> None:
-    PROMPT_FILE.write_text(json.dumps(prompts, indent=2))
+    PROMPT_FILE.write_text(yaml.safe_dump(prompts, indent=2))
 
 
 def load_prompt(prompt_id: str) -> Prompt:
@@ -217,9 +202,9 @@ def load_prompt(prompt_id: str) -> Prompt:
 def bootstrap_default_prompts() -> None:
     PROMPT_FILE.parent.mkdir(parents=True, exist_ok=True)
     if not PROMPT_FILE.exists():
-        PROMPT_FILE.write_text(json.dumps(DEFAULT_PROMPTS, indent=2))
+        write_prompts(DEFAULT_PROMPTS)
     else:
-        prompts = load_prompts()
+        prompts = load_prompts(bootstrap=False)
         prompts.update(DEFAULT_PROMPTS)
         write_prompts(prompts)
 
@@ -238,14 +223,14 @@ def load_or_create_conversation(
     if not path.exists():
         prompt = load_prompt(prompt_id)
         return list(prompt)
-    return json.loads(path.read_text())
+    return yaml.safe_load(path.read_text())
 
 
 def load_conversation(conversation_id: str) -> list[Message]:
     path = get_conversation_path(conversation_id)
     if not path.exists():
         fail(f"Conversation not found: {conversation_id}")
-    return json.loads(path.read_text())
+    return yaml.safe_load(path.read_text())
 
 
 def save_conversation(conversation_id: str, messages: list[Message]) -> None:
@@ -253,7 +238,7 @@ def save_conversation(conversation_id: str, messages: list[Message]) -> None:
     path = get_conversation_path(conversation_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
-        json.dump(messages, f, indent=2)
+        yaml.safe_dump(messages, f, indent=2)
     LATEST_CONV_FILE.write_text(conversation_id)
 
 
@@ -270,7 +255,7 @@ def next_conversation_id() -> str:
 
 
 def get_conversation_ids() -> list[str]:
-    return [path.stem for path in CONV_DIR.glob("*.json")]
+    return [path.stem for path in CONV_DIR.glob("*.yml")]
 
 
 def get_token_count(
