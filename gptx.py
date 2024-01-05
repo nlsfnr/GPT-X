@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import platform
-import os
 import importlib
 import json
+import os
+import platform
 import random
 import re
 import string
@@ -12,15 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import (
-    TYPE_CHECKING,
-    Iterable,
-    Iterator,
-    Any,
-    TextIO,
-    Tuple,
-    TypedDict,
-)
+from typing import TYPE_CHECKING, Any, Iterable, Iterator, TextIO, TypedDict
 
 if sys.version_info < (3, 11):
     from typing_extensions import Never
@@ -60,7 +52,9 @@ def try_import(name: str, pip_name: str) -> ModuleType:
         if not sys.executable:
             fail("sys.executable not set, aborting.")
         if confirm(f"Run `pip install {pip_name}`?"):
-            subprocess.run([sys.executable, "-m", "pip", "install", pip_name], check=True)
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", pip_name], check=True
+            )
             return try_import(name, pip_name)
         fail("Aborted.")
 
@@ -74,7 +68,9 @@ if TYPE_CHECKING:
 else:
     click = try_import("click", "click>=8.0.0")
     OpenAI = try_import("openai", "openai>=1.0.0").OpenAI
-    ChatCompletionChunk = try_import("openai.types.chat", "openai>=1.0.0").ChatCompletionChunk
+    ChatCompletionChunk = try_import(
+        "openai.types.chat", "openai>=1.0.0"
+    ).ChatCompletionChunk
     tiktoken = try_import("tiktoken", "tiktoken>=0.5.0")
     requests = try_import("requests", "requests>=2.0.0")
 
@@ -90,12 +86,12 @@ class Message(TypedDict):
 
 Prompt = list[Message]
 
-DEFAULT_MODEL = "gpt-4-1106-preview"
-WORKDIR = Path.home() / ".config" / "gptx"
-CONV_DIR = WORKDIR / "conversations"
-LATEST_CONV_FILE = CONV_DIR / "latest.txt"
-PROMPT_DIR = WORKDIR / "prompts"
-API_KEY_FILE = WORKDIR / "api-key.txt"
+DEFAULT_MODEL = os.getenv("GPTX_DEFAULT_MODEL", "gpt-4")
+WORKDIR = Path(os.getenv("GPTX_WORKDIR", Path.home() / ".config" / "gptx"))
+CONV_DIR = Path(os.getenv("GPTX_CONV_DIR", WORKDIR / "conversations"))
+LATEST_CONV_FILE = Path(os.getenv("GPTX_LATEST_CONV_FILE", CONV_DIR / "latest.txt"))
+PROMPT_FILE = Path(os.getenv("GPXT_PROMPT_FILE", WORKDIR / "prompts.json"))
+API_KEY_FILE = Path(os.getenv("GPTX_API_KEY_FILE", WORKDIR / "api-key.txt"))
 
 
 # Migrate old workdir
@@ -191,27 +187,41 @@ def get_conversation_path(conversation_id: str) -> Path:
     return path
 
 
-def get_prompt_path(prompt_id: str) -> Path:
-    path = PROMPT_DIR / f"{prompt_id}.json"
-    return path
+def load_prompts() -> dict[str, Prompt]:
+    bootstrap_default_prompts()
+    if not PROMPT_FILE.exists():
+        fail(f"Prompt file not found: {PROMPT_FILE}")
+    prompts = json.loads(PROMPT_FILE.read_text())
+    if not all(isinstance(prompt, list) for prompt in prompts.values()):
+        fail(f"Invalid prompt file: {PROMPT_FILE}")
+    if not all(
+        isinstance(message, dict) and "role" in message and "content" in message
+        for prompt in prompts.values()
+        for message in prompt
+    ):
+        fail(f"Invalid prompt file: {PROMPT_FILE}")
+    return prompts
+
+
+def write_prompts(prompts: dict[str, Prompt]) -> None:
+    PROMPT_FILE.write_text(json.dumps(prompts, indent=2))
 
 
 def load_prompt(prompt_id: str) -> Prompt:
-    bootstrap_default_prompts()
-    path = get_prompt_path(prompt_id)
-    if not path.exists():
+    prompts = load_prompts()
+    if prompt_id not in prompts:
         fail(f"Prompt not found: {prompt_id}")
-    return json.loads(path.read_text())
+    return prompts[prompt_id]
 
 
-def bootstrap_default_prompts() -> str:
-    PROMPT_DIR.mkdir(parents=True, exist_ok=True)
-    for prompt_id, prompt in DEFAULT_PROMPTS.items():
-        path = get_prompt_path(prompt_id)
-        if path.exists():
-            continue
-        path.write_text(json.dumps(prompt, indent=2))
-    return "default"
+def bootstrap_default_prompts() -> None:
+    PROMPT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if not PROMPT_FILE.exists():
+        PROMPT_FILE.write_text(json.dumps(DEFAULT_PROMPTS, indent=2))
+    else:
+        prompts = load_prompts()
+        prompts.update(DEFAULT_PROMPTS)
+        write_prompts(prompts)
 
 
 def get_latest_conversation_id() -> str | None:
@@ -393,9 +403,9 @@ def query(
             messages_token_count = get_token_count(messages, model)
             total_token_count = message_token_count + messages_token_count
             if total_token_count > max_prompt_tokens and not confirm(
-                    f"Total prompt length: {total_token_count} tokens. Max: "
-                    f"{max_prompt_tokens}. Continue anyway?",
-                    default=False,
+                f"Total prompt length: {total_token_count} tokens. Max: "
+                f"{max_prompt_tokens}. Continue anyway?",
+                default=False,
             ):
                 fail("Aborted.")
             messages.append(Message(role="user", content=message_str))
@@ -429,76 +439,16 @@ def query(
         run_in_shell(full_answer, yolo)
 
 
-@cli.command("new-prompt")
-@click.option("--prompt", "-p", type=str, help="Prompt ID", required=True)
-@click.option(
-    "--message",
-    "-m",
-    type=str,
-    multiple=True,
-    help=(
-        "Message to add to prompt. First word is the role (user or assistant), "
-        "followed by content"
-    ),
-)
-def new_prompt(
-    prompt: str,
-    message: Tuple[str, ...],
-) -> None:
-    role_content_pairs = [m.lstrip().split(" ", maxsplit=1) for m in message]
-    for role, content in role_content_pairs:
-        if role not in {"user", "assistant", "system"}:
-            fail(f"Invalid role: {role}, expected 'user', 'assistant' or 'system'")
-        if not content.strip():
-            fail(f"Empty content for role: {role}")
-    messages: Prompt = [
-        Message(role=role, content=content) for role, content in role_content_pairs
-    ]
-    path = get_prompt_path(prompt)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(messages, indent=2))
-
-
-@cli.command("prompt-ls")
-def prompts() -> None:
-    """list prompts."""
-    bootstrap_default_prompts()
-    ids = [path.stem for path in PROMPT_DIR.glob("*.json")]
-    if not ids:
-        printerr("No prompts found.")
-    table = Table(["#", "ID"])
-    for i, prompt_id in enumerate(ids, 1):
-        table.add_row([str(i), prompt_id])
-    table.print()
-
-
-@cli.command("prompt-edit")
+@cli.command("prompts")
 @click.option("--editor", "-e", type=str, default=os.environ.get("EDITOR", "nvim"))
-@click.argument("prompt_id", type=str)
-def edit_prompt(
+def edit_prompts(
     editor: str,
-    prompt_id: str,
 ) -> None:
-    """Edit a prompt."""
+    """Edit prompts."""
     bootstrap_default_prompts()
-    path = get_prompt_path(prompt_id)
-    if not path.exists():
-        fail(f"Prompt not found: {prompt_id}")
-    subprocess.run([editor, str(path)], check=True)
-
-
-@cli.command("prompt-rm")
-@click.argument("prompt_id", type=str)
-def remove_prompt(
-    prompt_id: str,
-) -> None:
-    """Remove a prompt."""
-    bootstrap_default_prompts()
-    path = get_prompt_path(prompt_id)
-    if not path.exists():
-        fail(f"Prompt not found: {prompt_id}")
-    path.unlink()
-    printerr(f"Prompt {prompt_id} removed.")
+    if not PROMPT_FILE.exists():
+        fail(f"Prompt file not found: {PROMPT_FILE}")
+    subprocess.run([editor, str(PROMPT_FILE)], check=True)
 
 
 def run_in_shell(
