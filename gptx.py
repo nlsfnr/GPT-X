@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 from __future__ import annotations
 
 import importlib
@@ -11,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Iterable, Iterator, TextIO, TypedDict
+from typing import TYPE_CHECKING, Any, Dict, Iterable, Iterator, List, TextIO, TypedDict
 
 if sys.version_info < (3, 11):
     from typing_extensions import Never
@@ -30,11 +30,6 @@ def fail(msg: str) -> Never:
 
 if platform.system() != "Linux":
     fail(f"Ew, {platform.system()}")
-
-
-if sys.version_info < (3, 9):
-    version = ".".join(map(str, sys.version_info[:3]))
-    fail(f"Python 3.9 or higher is required. You are using {version}.")
 
 
 def confirm(msg: str, default: bool = False) -> bool:
@@ -63,6 +58,7 @@ if TYPE_CHECKING:
     import requests
     import tiktoken
     import yaml
+    import PyPDF2
     from openai import OpenAI
     from openai.types.chat import ChatCompletionChunk
 else:
@@ -74,6 +70,7 @@ else:
     tiktoken = try_import("tiktoken", "tiktoken>=0.5.0")
     requests = try_import("requests", "requests>=2.0.0")
     yaml = try_import("yaml", "pyyaml>=5.0.0")
+    # PyPDF2 is dynamically imported in `enhance_content` when needed
 
 
 def printout(*args: Any, **kwargs: Any) -> None:
@@ -85,7 +82,7 @@ class Message(TypedDict):
     content: str
 
 
-Prompt = list[Message]
+Prompt = List[Message]
 
 DEFAULT_MODEL = os.getenv("GPTX_DEFAULT_MODEL", "gpt-4")
 WORKDIR = Path(os.getenv("GPTX_WORKDIR", Path.home() / ".config" / "gptx"))
@@ -95,7 +92,7 @@ PROMPT_FILE = Path(os.getenv("GPXT_PROMPT_FILE", WORKDIR / "prompts.yml"))
 API_KEY_FILE = Path(os.getenv("GPTX_API_KEY_FILE", WORKDIR / "api-key.txt"))
 
 
-DEFAULT_PROMPTS: dict[str, Prompt] = dict(
+DEFAULT_PROMPTS: Dict[str, Prompt] = dict(
     default=[
         Message(
             role="system",
@@ -127,11 +124,11 @@ class Table:
     """A simple table class for printing nicely formatted tables to the
     terminal."""
 
-    def __init__(self, columns: list[str]) -> None:
+    def __init__(self, columns: List[str]) -> None:
         self.columns = columns
-        self.rows: list[list[str]] = []
+        self.rows: List[List[str]] = []
 
-    def add_row(self, row: dict[str, str] | list[str]) -> Table:
+    def add_row(self, row: Dict[str, str] | List[str]) -> Table:
         if isinstance(row, dict):
             row = [row.get(column, "") for column in self.columns]
         self.rows.append(row)
@@ -179,7 +176,7 @@ def get_conversation_path(conversation_id: str) -> Path:
     return path
 
 
-def load_prompts(bootstrap: bool = True) -> dict[str, Prompt]:
+def load_prompts(bootstrap: bool = True) -> Dict[str, Prompt]:
     if bootstrap:
         bootstrap_default_prompts()
     if not PROMPT_FILE.exists():
@@ -188,7 +185,7 @@ def load_prompts(bootstrap: bool = True) -> dict[str, Prompt]:
     return prompts
 
 
-def write_prompts(prompts: dict[str, Prompt]) -> None:
+def write_prompts(prompts: Dict[str, Prompt]) -> None:
     PROMPT_FILE.write_text(yaml.safe_dump(prompts, indent=2))
 
 
@@ -218,7 +215,7 @@ def get_latest_conversation_id() -> str | None:
 def load_or_create_conversation(
     conversation_id: str,
     prompt_id: str,
-) -> list[Message]:
+) -> List[Message]:
     path = get_conversation_path(conversation_id)
     if not path.exists():
         prompt = load_prompt(prompt_id)
@@ -226,14 +223,14 @@ def load_or_create_conversation(
     return yaml.safe_load(path.read_text())
 
 
-def load_conversation(conversation_id: str) -> list[Message]:
+def load_conversation(conversation_id: str) -> List[Message]:
     path = get_conversation_path(conversation_id)
     if not path.exists():
         fail(f"Conversation not found: {conversation_id}")
     return yaml.safe_load(path.read_text())
 
 
-def save_conversation(conversation_id: str, messages: list[Message]) -> None:
+def save_conversation(conversation_id: str, messages: List[Message]) -> None:
     conversation_id = resolve_conversation_id(conversation_id)
     path = get_conversation_path(conversation_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -254,12 +251,12 @@ def next_conversation_id() -> str:
     fail(f"Failed to generate a conversation ID after {ATTEMPTS} attempts.")
 
 
-def get_conversation_ids() -> list[str]:
+def get_conversation_ids() -> List[str]:
     return [path.stem for path in CONV_DIR.glob("*.yml")]
 
 
 def get_token_count(
-    x: str | list[Message],
+    x: str | List[Message],
     model: str,
 ) -> int:
     enc = tiktoken.encoding_for_model(model)
@@ -287,11 +284,7 @@ def enhance_content(
             if not path.exists():
                 fail(f"File not found: {path}")
             if path.suffix.lower() == ".pdf":
-                if TYPE_CHECKING:
-                    import PyPDF2
-                else:
-                    PyPDF2 = try_import("PyPDF2", "PyPDF2>=3.0.0")
-
+                PyPDF2 = try_import("PyPDF2", "PyPDF2>=3.0.0")
                 text = ""
                 with open(path, "rb") as f:
                     reader = PyPDF2.PdfFileReader(f)
@@ -309,7 +302,7 @@ def enhance_content(
 
 
 def generate(
-    messages: list[Message],
+    messages: List[Message],
     api_key: str,
     max_tokens: int,
     temperature: float,
@@ -362,20 +355,19 @@ def query(
     prompt: str,
     model: str,
     max_prompt_tokens: int,
-    user_message: list[str],
+    user_message: List[str],
     run: bool,
     yolo: bool,
     interactive: bool,
 ) -> None:
     """Query GPT4"""
-    if interactive and (run or yolo):
-        fail("Cannot use --interactive with --run or --yolo.")
     api_key = api_key_file.read_text().strip()
     conversation_id = conversation or next_conversation_id()
     conversation_id = resolve_conversation_id(conversation_id)
     prompt_id = prompt
     messages = load_or_create_conversation(conversation_id, prompt_id)
     message_str = " ".join(user_message).strip()
+    print_header = True
     try:
         while True:
             message_str = enhance_content(message_str)
@@ -396,9 +388,12 @@ def query(
             messages.append(Message(role="user", content=message_str))
             full_answer = ""
             token_count = get_token_count(messages, model=model)
-            printerr(
-                f"Conversation ID: {conversation_id} | {token_count} tokens", end="\n\n"
-            )
+            if print_header:
+                printerr(
+                    f"Conversation ID: {conversation_id} | {token_count} tokens",
+                    end="\n\n",
+                )
+                print_header = False
             chunks = generate(
                 messages=messages,
                 api_key=api_key,
@@ -417,11 +412,15 @@ def query(
             if not interactive:
                 break
             message_str = input("\nYou: ").strip()
+            printerr()
+            if not message_str:
+                raise KeyboardInterrupt
     except KeyboardInterrupt:
-        fail("Interrupted.")
+        printerr("Exiting interactive mode.\n")
     if run:
-        printerr()
-        run_in_shell(full_answer, yolo)
+        if not messages[-1]["role"] == "assistant":
+            fail("Nothing to run.")
+        run_in_shell(messages[-1]["content"], yolo)
 
 
 @cli.command("prompts")
@@ -442,6 +441,7 @@ def run_in_shell(
 ) -> None:
     if not yolo and not confirm("Run in shell?", default=True):
         fail("Aborted.")
+    printerr()
     subprocess.Popen(
         command,
         shell=True,
