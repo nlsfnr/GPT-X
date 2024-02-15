@@ -55,10 +55,10 @@ def try_import(name: str, pip_name: str) -> ModuleType:
 
 if TYPE_CHECKING:
     import click
+    import PyPDF2  # noqa: F401
     import requests
     import tiktoken
     import yaml
-    import PyPDF2
     from openai import OpenAI
     from openai.types.chat import ChatCompletionChunk
 else:
@@ -284,7 +284,7 @@ def enhance_content(
             if not path.exists():
                 fail(f"File not found: {path}")
             if path.suffix.lower() == ".pdf":
-                PyPDF2 = try_import("PyPDF2", "PyPDF2>=3.0.0")
+                PyPDF2 = try_import("PyPDF2", "PyPDF2>=3.0.0")  # noqa: F811
                 text = ""
                 with open(path, "rb") as f:
                     reader = PyPDF2.PdfFileReader(f)
