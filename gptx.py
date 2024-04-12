@@ -84,7 +84,7 @@ class Message(TypedDict):
 
 Prompt = List[Message]
 
-DEFAULT_MODEL = os.getenv("GPTX_DEFAULT_MODEL", "gpt-4-turbo-preview")
+DEFAULT_MODEL = os.getenv("GPTX_DEFAULT_MODEL", "gpt-4-turbo")
 WORKDIR = Path(os.getenv("GPTX_WORKDIR", Path.home() / ".config" / "gptx"))
 CONV_DIR = Path(os.getenv("GPTX_CONV_DIR", WORKDIR / "conversations"))
 LATEST_CONV_FILE = Path(os.getenv("GPTX_LATEST_CONV_FILE", CONV_DIR / "latest.txt"))
