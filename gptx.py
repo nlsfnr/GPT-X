@@ -23,13 +23,13 @@ def printerr(*args: Any, **kwargs: Any) -> None:
     print(*args, file=sys.stderr, **kwargs, flush=True)
 
 
-def fail(msg: str) -> Never:
+def die(msg: str) -> Never:
     printerr(msg)
     exit(1)
 
 
 if platform.system() != "Linux":
-    fail(f"Ew, {platform.system()}")
+    die(f"Ew, {platform.system()} 🤮")
 
 
 def confirm(msg: str, default: bool = False) -> bool:
@@ -44,13 +44,13 @@ def try_import(name: str, pip_name: str) -> ModuleType:
     except ImportError:
         printerr(f"Required package not found: {pip_name}")
         if not sys.executable:
-            fail("sys.executable not set, aborting.")
+            die("sys.executable not set, aborting.")
         if confirm(f"Run `pip install {pip_name}`?"):
             subprocess.run(
                 [sys.executable, "-m", "pip", "install", pip_name], check=True
             )
             return try_import(name, pip_name)
-        fail("Aborted.")
+        die("Aborted.")
 
 
 if TYPE_CHECKING:
@@ -67,7 +67,7 @@ else:
     ChatCompletionChunk = try_import(
         "openai.types.chat", "openai>=1.0.0"
     ).ChatCompletionChunk
-    tiktoken = try_import("tiktoken", "tiktoken>=0.5.0")
+    tiktoken = try_import("tiktoken", "tiktoken>=0.7.0")
     requests = try_import("requests", "requests>=2.0.0")
     yaml = try_import("yaml", "pyyaml>=5.0.0")
     # PyPDF2 is dynamically imported in `enhance_content` when needed
@@ -84,7 +84,7 @@ class Message(TypedDict):
 
 Prompt = List[Message]
 
-DEFAULT_MODEL = os.getenv("GPTX_DEFAULT_MODEL", "gpt-4-turbo")
+DEFAULT_MODEL = os.getenv("GPTX_DEFAULT_MODEL", "gpt-4o")
 WORKDIR = Path(os.getenv("GPTX_WORKDIR", Path.home() / ".config" / "gptx"))
 CONV_DIR = Path(os.getenv("GPTX_CONV_DIR", WORKDIR / "conversations"))
 LATEST_CONV_FILE = Path(os.getenv("GPTX_LATEST_CONV_FILE", CONV_DIR / "latest.txt"))
@@ -135,11 +135,6 @@ class Table:
         return self
 
     def order_by(self, columns: str | Iterable[str]) -> Table:
-        """Order the rows by the given columns.
-
-        Args:
-            columns: The columns to order by.
-        """
         if isinstance(columns, str):
             columns = [columns]
         indices = [self.columns.index(column) for column in columns]
@@ -165,7 +160,7 @@ def resolve_conversation_id(conversation_id: str) -> str:
     if conversation_id.strip().lower() == "latest":
         latest = get_latest_conversation_id()
         if latest is None:
-            fail("Latest conversation not found.")
+            die("Latest conversation not found.")
         conversation_id = latest
     return conversation_id
 
@@ -180,7 +175,7 @@ def load_prompts(bootstrap: bool = True) -> Dict[str, Prompt]:
     if bootstrap:
         bootstrap_default_prompts()
     if not PROMPT_FILE.exists():
-        fail(f"Prompt file not found: {PROMPT_FILE}")
+        die(f"Prompt file not found: {PROMPT_FILE}")
     prompts = yaml.safe_load(PROMPT_FILE.read_text())
     return prompts
 
@@ -192,7 +187,7 @@ def write_prompts(prompts: Dict[str, Prompt]) -> None:
 def load_prompt(prompt_id: str) -> Prompt:
     prompts = load_prompts()
     if prompt_id not in prompts:
-        fail(f"Prompt not found: {prompt_id}")
+        die(f"Prompt not found: {prompt_id}")
     return prompts[prompt_id]
 
 
@@ -226,7 +221,7 @@ def load_or_create_conversation(
 def load_conversation(conversation_id: str) -> List[Message]:
     path = get_conversation_path(conversation_id)
     if not path.exists():
-        fail(f"Conversation not found: {conversation_id}")
+        die(f"Conversation not found: {conversation_id}")
     return yaml.safe_load(path.read_text())
 
 
@@ -248,7 +243,7 @@ def next_conversation_id() -> str:
             path = get_conversation_path(conversation_id)
             if not path.exists():
                 return conversation_id
-    fail(f"Failed to generate a conversation ID after {ATTEMPTS} attempts.")
+    die(f"Failed to generate a conversation ID after {ATTEMPTS} attempts.")
 
 
 def get_conversation_ids() -> List[str]:
@@ -259,7 +254,10 @@ def get_token_count(
     x: str | List[Message],
     model: str,
 ) -> int:
-    enc = tiktoken.encoding_for_model(model)
+    try:
+        enc = tiktoken.encoding_for_model(model)
+    except KeyError:
+        enc = tiktoken.encoding_for_model("gpt-4")
     messages = x if isinstance(x, list) else [Message(role="user", content=x)]
     total = sum(len(enc.encode(message["content"])) for message in messages)
     return total
@@ -282,7 +280,7 @@ def enhance_content(
         else:
             path = Path(path_str)
             if not path.exists():
-                fail(f"File not found: {path}")
+                die(f"File not found: {path}")
             if path.suffix.lower() == ".pdf":
                 PyPDF2 = try_import("PyPDF2", "PyPDF2>=3.0.0")  # noqa: F811
                 text = ""
@@ -375,7 +373,7 @@ def query(
                 if interactive:
                     message_str = input("You:")
                     continue
-                fail("Empty message.")
+                die("Empty message.")
             message_token_count = get_token_count(message_str, model)
             messages_token_count = get_token_count(messages, model)
             total_token_count = message_token_count + messages_token_count
@@ -384,7 +382,7 @@ def query(
                 f"{max_prompt_tokens}. Continue anyway?",
                 default=False,
             ):
-                fail("Aborted.")
+                die("Aborted.")
             messages.append(Message(role="user", content=message_str))
             full_answer = ""
             token_count = get_token_count(messages, model=model)
@@ -419,7 +417,7 @@ def query(
         printerr("Exiting interactive mode.\n")
     if run:
         if not messages[-1]["role"] == "assistant":
-            fail("Nothing to run.")
+            die("Nothing to run.")
         run_in_shell(messages[-1]["content"], yolo)
 
 
@@ -431,7 +429,7 @@ def edit_prompts(
     """Edit prompts."""
     bootstrap_default_prompts()
     if not PROMPT_FILE.exists():
-        fail(f"Prompt file not found: {PROMPT_FILE}")
+        die(f"Prompt file not found: {PROMPT_FILE}")
     subprocess.run([editor, str(PROMPT_FILE)], check=True)
 
 
@@ -440,7 +438,7 @@ def run_in_shell(
     yolo: bool,
 ) -> None:
     if not yolo and not confirm("Run in shell?", default=True):
-        fail("Aborted.")
+        die("Aborted.")
     printerr()
     subprocess.Popen(
         command,
@@ -479,7 +477,7 @@ def remove(conversation_id: str) -> None:
     conversation_id = resolve_conversation_id(conversation_id)
     path = get_conversation_path(conversation_id)
     if not path.exists():
-        fail(f"Conversation {conversation_id} not found.")
+        die(f"Conversation {conversation_id} not found.")
     path.unlink()
     printerr(f"Conversation {conversation_id} removed.")
 
