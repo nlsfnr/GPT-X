@@ -483,6 +483,21 @@ def remove(conversation_id: str) -> None:
     printerr(f"Conversation {conversation_id} removed.")
 
 
+@cli.command("edit")
+@click.argument("conversation_id", type=str, default="latest")
+@click.option("--editor", "-e", type=str, default=os.environ.get("EDITOR", "nvim"))
+def edit_(
+    conversation_id: str,
+    editor: str,
+) -> None:
+    """Edit a conversation."""
+    conversation_id = resolve_conversation_id(conversation_id)
+    path = get_conversation_path(conversation_id)
+    if not path.exists():
+        die(f"Conversation {conversation_id} not found.")
+    subprocess.run([editor, str(path)], check=True)
+
+
 @cli.command("print")
 @click.argument("conversation_id", type=str, default="latest")
 def print_(conversation_id: str) -> None:
