@@ -11,7 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Dict, Iterable, Iterator, List, TextIO, TypedDict
+from typing import (TYPE_CHECKING, Any, Dict, Iterable, Iterator, List, TextIO,
+                    TypedDict)
 
 if sys.version_info < (3, 11):
     from typing_extensions import Never

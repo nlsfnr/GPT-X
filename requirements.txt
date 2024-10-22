@@ -7,6 +7,4 @@ pyyaml>=5.0.0
 
 mypy
 flake8
-flake8-bugbear
 isort
-black

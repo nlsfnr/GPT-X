@@ -1,62 +1,50 @@
-NAME=gptx
-
-DOCKER=$(NAME):latest
-PY_FILES=./*.py
-
+PY_VERSION=3.12.7
 VENV=.venv
-PYTHON=$(VENV)/bin/python3
-PIP_FREEZE=.requirements.freeze.txt
+PY=uv run -- python
+PIP=uv pip
+ECHO=>&2 echo
+SRC_FILES=./gptx.py
+LOCAL_DEPS=.requirements.freeze.txt
 
-.PHONY: ci
-ci: $(PY_FILES) py-deps type-check format
+all: lint typecheck
 
-.PHONY: type-check
-type-check: $(VENV) $(PY_FILES)
-	$(PYTHON) -m mypy \
+
+${LOCAL_DEPS}: requirements.txt
+	@${ECHO} "Installing dependencies..."
+	@python3 -m pip install --upgrade --user uv
+	@uv python install ${PY_VERSION}
+	@uv venv --python ${PY_VERSION} ${VENV}
+	@${PIP} install \
+		--requirement requirements.txt \
+		pip  # To allow mypy to install type stubs
+	@${PIP} freeze > ${LOCAL_DEPS}
+
+
+.PHONY: lint
+lint: ${LOCAL_DEPS}
+	@${ECHO} "Linting..."
+	@${PY} -m isort \
+		--add-import "from __future__ import annotations" \
+		--append-only *.py \
+		-- ${SRC_FILES}
+	@${PY} -m flake8 \
+		--ignore E501,W503,E203,E704 \
+		-- ${SRC_FILES}
+
+
+.PHONY: typecheck
+typecheck: ${LOCAL_DEPS}
+	@${ECHO} "Running type checker..."
+	@${PY} -m mypy \
 		--install-types \
 		--non-interactive \
-		--ignore-missing-imports \
-		--pretty \
-		$(PY_FILES)
+		-- ${SRC_FILES}
 
-.PHONY: format
-format: $(VENV) $(PY_FILES)
-	$(PYTHON) -m isort $(PY_FILES)
-	$(PYTHON) -m black $(PY_FILES)
-	$(PYTHON) -m flake8 $(PY_FILES)
-
-.PHONY: py-deps
-py-deps: $(PIP_FREEZE)
-
-$(PIP_FREEZE): $(VENV) requirements.txt
-	$(PYTHON) -m pip install \
-		--upgrade \
-		--require-virtualenv \
-		pip
-	$(PYTHON) -m pip install \
-		--upgrade \
-		--require-virtualenv \
-		-r requirements.txt
-	$(PYTHON) -m pip freeze > $(PIP_FREEZE)
-
-$(VENV):
-	python3 -m venv $(VENV)
-
-.PHONY: docker
-docker: docker-build
-	docker run \
-		--rm \
-		-it \
-		--gpus all \
-		-v $(PWD):/workdir/ \
-		$(DOCKER) bash
-
-docker-build: Dockerfile requirements.txt
-	docker build -t $(DOCKER) .
 
 .PHONY: clean
 clean:
-	rm -rf \
-		$(VENV) \
-		$(PIP_FREEZE) \
-		.mypy_cache/
+	@${ECHO} "Cleaning up..."
+	@rm -rf \
+        ${VENV} \
+        ${LOCAL_DEPS} \
+        .mypy_cache
